@@ -1,16 +1,8 @@
-import { PrismaClient } from './../generated/prisma/client';
-//import { prisma } from '../src/prisma'
-import { PrismaPg } from '@prisma/adapter-pg'
-//import { PrismaClient } from '../generated/prisma/client'
+import { prisma } from "../src/prisma"
 import { OpenAIEmbeddings } from '@langchain/openai'
 import dotenv from 'dotenv'
 
-dotenv.config()
-
-  const connectionString = `${process.env.DATABASE_URL}`
-
-  const adapter = new PrismaPg({ connectionString })
-  const prisma = new PrismaClient({ adapter })
+  dotenv.config()
 
 async function main() {
 
