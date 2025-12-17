@@ -1,11 +1,14 @@
-import { prisma } from "../src/prisma"
+import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
+import { promises as fsp } from "fs";
+import { prisma } from '../lib/prisma'
 import { OpenAIEmbeddings } from '@langchain/openai'
 import dotenv from 'dotenv'
 
+  let output = []
   dotenv.config()
 
-async function main() {
 
+export default async function main() {
 
 
   console.log('=== Document Embedding Script ===\n')
@@ -20,19 +23,23 @@ async function main() {
     openAIApiKey: process.env.OPENAI_API_KEY,
   })
 
+  const docsDir = "files";
+  const fileNames = await fsp.readdir(docsDir);
+  for (const fileName of fileNames) {
+    const document = await fsp.readFile(`${docsDir}/${fileName}`, "utf8");
+    
+    const splitter = RecursiveCharacterTextSplitter.fromLanguage("markdown", {
+        chunkSize: 500,
+        chunkOverlap: 50,
+    });
+    output = await splitter.createDocuments([document]);
+    //console.log("___________________________________________________")
+    //console.log("document: ",output)
+  }
+
+
   // Your documents to embed
-  const documents = [
-    'Our company offers 24/7 customer support via phone and email.',
-    'The basic subscription plan costs $29 per month.',
-    'All plans include a 30-day money-back guarantee.',
-    'We integrate with Slack, Microsoft Teams, and Google Workspace.',
-    'API access is available for enterprise customers.',
-    'Our platform uses artificial intelligence for data analysis.',
-    'Customer satisfaction is our top priority.',
-    'We provide detailed analytics and reporting tools.',
-    'Monthly webinars are available for all customers.',
-    'Our support team responds within 2 hours during business days.'
-  ]
+  const documents = output
 
   console.log(`Processing ${documents.length} documents...\n`)
 
@@ -40,7 +47,8 @@ async function main() {
   let errorCount = 0
 
   for (let i = 0; i < documents.length; i++) {
-    const text = documents[i]
+    const doc = documents[i]
+    const text = doc.pageContent
     
     try {
       console.log(`[${i + 1}/${documents.length}] Embedding: "${text.substring(0, 50)}..."`)
@@ -83,6 +91,7 @@ async function main() {
   const totalCount = await prisma.document.count()
   console.log(`\nTotal documents in database: ${totalCount}`)
 }
+
 
 main()
   .then(async () => {
