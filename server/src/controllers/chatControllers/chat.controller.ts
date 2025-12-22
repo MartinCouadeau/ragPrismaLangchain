@@ -2,7 +2,6 @@ import { Request, Response } from 'express';
 import { streamText } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { ChatRequest, Message } from '../../types/index';
-//import { createStreamableValue } from 'ai/rsc'; // Or appropriate import
 
 export async function handleChat(req: Request, res: Response): Promise<void> {
   try {
@@ -10,10 +9,10 @@ export async function handleChat(req: Request, res: Response): Promise<void> {
     const currentMessageContent = messages[messages.length - 1].content;
 
     // Vector search
-    const vectorSearch = await fetch("http://localhost:3000/api/vector", {
+    const vectorSearch = await fetch("http://localhost:3000/api/seach/vector", {
       method: "POST",
       headers: {
-        "Content-Type": "application/json", // Changed to JSON
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({ 
         question: currentMessageContent 
@@ -23,10 +22,9 @@ export async function handleChat(req: Request, res: Response): Promise<void> {
     // Create system and user messages
     const systemMessage: Message = {
       role: 'system',
-      content: 'You are a AI agent from Global Tech, you should always start your messages with "Welcome to Global Tech Support!: "'
+      content: 'You are a AI agent from Global Tech, your job its to  handle documents and data. if you dont have information related to the required topic make a sumary of what you have and specify you were made to asist employees'
     };
-    //'You are a custom AI agent made to especialy handle documents and data. if you dont have information related to the required topic make a sumary of what you have and specify you were made to asist employees'
-    
+  
     const userMessage: Message = {
       role: 'user',
       content: `Context sections: ${JSON.stringify(vectorSearch)}\n\nQuestion: ${currentMessageContent}`
@@ -34,7 +32,7 @@ export async function handleChat(req: Request, res: Response): Promise<void> {
 
     // Stream the response
     const result = await streamText({
-      model: openai('gpt-3.5-turbo'),
+      model: openai('gpt-5.2'),
       messages: [systemMessage, userMessage],
     });
 
@@ -57,7 +55,7 @@ export async function handleChat(req: Request, res: Response): Promise<void> {
 
     res.status(200).json({ 
       response: fullText,
-      question: currentMessageContent 
+      content: currentMessageContent 
     });
 
   } catch (error) {

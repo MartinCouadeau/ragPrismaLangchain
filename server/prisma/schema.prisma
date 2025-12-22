@@ -14,11 +14,400 @@ datasource db {
 }
 
 
-model Document {
-  id        String   @id @default(cuid())
-  content   String
-  embedding Unsupported("vector(1536)")?
-  metadata  Json?
+enum UserRole {
+  ADMIN
+  PROJECT_MANAGER
+  DEVELOPER //TODO:we need to change this role to Member
+  MEMBER
+  GUEST
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum ProjectStatus {
+  PLANNING
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum TaskAttachmentType {
+  IMAGE
+  FILE
+  LINK
+  PDF
+}
+
+enum NotificationChannel {
+  APP
+  EMAIL
+}
+
+enum NotificationSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+enum NotificationDeliveryStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+enum SchedulerRunStatus {
+  SUCCESS
+  FAILED
+  SKIPPED
+}
+
+enum ExpenseCategory {
+  SOFTWARE
+  TRAVEL
+  EQUIPMENT
+  LABOR
+  OPERATIONS
+  OTHER
+}
+
+model User {
+  id               String              @id @default(dbgenerated("md5(random()::text || clock_timestamp()::text)::uuid"))
+  firstName        String
+  lastName         String
+  email            String              @unique
+  passwordHash     String
+  role             UserRole            @default(DEVELOPER)
+  roleLabel        String?
+  hourlyRateCents  Int                 @default(0)
+  status           UserStatus          @default(ACTIVE)
+  isVerified       Boolean             @default(false)
+  profileImageUrl  String?
+  refreshTokens    RefreshToken[]
+  projectsManaged  Project[]           @relation("ProjectManager")
+  tasksAssigned    Task[]              @relation("TaskAssignee")
+  projectAssignments ProjectPersonnel[] @relation("UserProjectPersonnel")
+  taskAssignments  Assignment[]        @relation("UserAssignments")
+  taskAttachments TaskAttachment[]
+  expenses         Expense[]           @relation("ExpenseCreator")
+  timeEntries      TimeEntry[]         @relation("UserTimeEntries")
+  taskActivities   TaskActivity[]
+  authoredNotifications Notification[] @relation("NotificationActor")
+  notificationDeliveries NotificationDelivery[]
+  resetToken              String?
+  resetTokenExpiresAt     DateTime?
+  invitationToken         String?
+  invitationTokenExpiresAt DateTime?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+}
+
+model RefreshToken {
+  id        String   @id @default(dbgenerated("md5(random()::text || clock_timestamp()::text)::uuid"))
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+}
+
+model Project {
+  id               String          @id @default(dbgenerated("md5(random()::text || clock_timestamp()::text)::uuid"))
+  name             String
+  description      String?
+  status           ProjectStatus   @default(PLANNING)
+  startDate        DateTime?
+  endDate          DateTime?
+  budgetCents      Int
+  projectManagerId String?
+  projectManager   User?           @relation("ProjectManager", fields: [projectManagerId], references: [id], onDelete: SetNull)
+  phases           Phase[]
+  sprints          Sprint[]
+  taskStatuses     ProjectTaskStatus[]
+  tasks            Task[]
+  projectPersonnel ProjectPersonnel[]
+  expenses         Expense[]
+  timeEntries      TimeEntry[]
+  kanbanTemplateKey String         @default("default")
+  notifications    Notification[]
+  healthSnapshot   ProjectHealthSnapshot?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+}
+
+model ProjectHealthSnapshot {
+  id          String   @id @default(dbgenerated("md5(random()::text || clock_timestamp()::text)::uuid"))
+  projectId   String   @unique
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  statusLabel String
+  computedAt  DateTime @default(now())
+
+  @@index([projectId, computedAt])
+}
+
+model ProjectTaskStatus {
+  id         String     @id @default(dbgenerated("md5(random()::text || clock_timestamp()::text)::uuid"))
+  projectId  String
+  project    Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  value      String
+  label      String
+  position   Int
+  category   TaskStatus @default(TODO)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  tasks      Task[]
+
+  @@unique([projectId, value])
+  @@unique([projectId, position])
+}
+
+model Phase {
+  id        String   @id @default(dbgenerated("md5(random()::text || clock_timestamp()::text)::uuid"))
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name      String
+  position  Int
+  startDate DateTime?
+  endDate   DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  sprints   Sprint[]
+
+  @@unique([projectId, position])
+}
+
+model Sprint {
+  id        String   @id @default(dbgenerated("md5(random()::text || clock_timestamp()::text)::uuid"))
+  projectId String
+  phaseId   String
+  phase     Phase    @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name      String
+  goal      String?
+  startDate DateTime?
+  endDate   DateTime?
+  tasks     Task[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([phaseId, name])
+}
+
+model Task {
+  id             String            @id @default(dbgenerated("md5(random()::text || clock_timestamp()::text)::uuid"))
+  projectId      String
+  sprintId       String?
+  assigneeId     String?
+  statusId       String
+  project        Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sprint         Sprint?           @relation(fields: [sprintId], references: [id], onDelete: SetNull)
+  assignee       User?             @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  status         ProjectTaskStatus @relation(fields: [statusId], references: [id], onDelete: Restrict)
+  title          String
+  description    String?
+  dueDate        DateTime?
+  priority       TaskPriority      @default(MEDIUM)
+  estimateHours  Float?
+  actualSeconds  Int               @default(0)
+  checklist      Checklist?
+  dependencies   TaskDependency[]  @relation("TaskDependency_dependent")
+  blockedBy      TaskDependency[]  @relation("TaskDependency_dependency")
+  assignments    Assignment[]
+  timeEntries    TimeEntry[]
+  activities     TaskActivity[]
+  attachments    TaskAttachment[]
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+}
+
+model TaskDependency {
+  taskId          String
+  dependsOnTaskId String
+  createdAt       DateTime @default(now())
+
+  task      Task @relation("TaskDependency_dependent", fields: [taskId], references: [id], onDelete: Cascade)
+  dependsOn Task @relation("TaskDependency_dependency", fields: [dependsOnTaskId], references: [id], onDelete: Cascade)
+
+  @@id([taskId, dependsOnTaskId])
+}
+
+model Checklist {
+  id             String          @id @default(dbgenerated("md5(random()::text || clock_timestamp()::text)::uuid"))
+  taskId         String          @unique
+  task           Task            @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  requireAllDone Boolean         @default(false)
+  items          ChecklistItem[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+}
+
+model ChecklistItem {
+  id          String    @id @default(dbgenerated("md5(random()::text || clock_timestamp()::text)::uuid"))
+  checklistId String
+  checklist   Checklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
+  label       String
+  done        Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model TaskActivity {
+  id        String   @id @default(dbgenerated("md5(random()::text || clock_timestamp()::text)::uuid"))
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  message   String
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([taskId, createdAt])
+}
+
+model TaskAttachment {
+  id        String             @id @default(dbgenerated("md5(random()::text || clock_timestamp()::text)::uuid"))
+  taskId    String
+  task      Task               @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+  type      TaskAttachmentType @default(FILE)
+  name      String
+  objectKey String
+  url       String
+  mimeType  String
+  size      Int?
+  metadata  Json?
+  createdAt DateTime           @default(now())
+
+  @@index([taskId])
+}
+
+model ProjectPersonnel {
+  id          String    @id @default(dbgenerated("md5(random()::text || clock_timestamp()::text)::uuid"))
+  projectId   String
+  userId      String
+  roleLabel   String?
+  createdAt   DateTime  @default(now())
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user        User      @relation("UserProjectPersonnel", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+}
+
+model Assignment {
+  id            String    @id @default(dbgenerated("md5(random()::text || clock_timestamp()::text)::uuid"))
+  taskId        String
+  userId        String
+  allocationPct  Int
+  startDate     DateTime
+  endDate       DateTime
+  task          Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user          User      @relation("UserAssignments", fields: [userId], references: [id], onDelete: Cascade)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([taskId, userId, startDate, endDate])
+}
+
+model TimeEntry {
+  id                String     @id @default(dbgenerated("md5(random()::text || clock_timestamp()::text)::uuid"))
+  projectId         String
+  taskId            String
+  userId            String?
+  startedAt         DateTime?
+  stoppedAt         DateTime?
+  entryDate         DateTime
+  seconds           Int
+  note              String?
+  rateCentsSnapshot Int
+  missingReminderSentAt DateTime?
+  task              Task       @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  project           Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user              User?      @relation("UserTimeEntries", fields: [userId], references: [id], onDelete: SetNull)
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  @@index([projectId, entryDate])
+}
+
+model Expense {
+  id          String          @id @default(dbgenerated("md5(random()::text || clock_timestamp()::text)::uuid"))
+  projectId   String
+  title       String          @default("")
+  category    ExpenseCategory
+  amountCents Int
+  description String?
+  date        DateTime
+  createdById String?
+  project     Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy   User?           @relation("ExpenseCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@index([projectId, date])
+}
+
+model Notification {
+  id          String                @id @default(dbgenerated("md5(random()::text || clock_timestamp()::text)::uuid"))
+  projectId   String?
+  project     Project?              @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  actorId     String?
+  actor       User?                 @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
+  entityType  String
+  entityId    String
+  category    String
+  eventKey    String
+  title       String
+  body        String
+  severity    NotificationSeverity  @default(INFO)
+  metadata    Json?
+  dedupeKey   String?
+  createdAt   DateTime              @default(now())
+  deliveries  NotificationDelivery[]
+
+  @@index([projectId])
+  @@index([eventKey, dedupeKey])
+  @@index([entityType, dedupeKey])
+}
+
+model NotificationDelivery {
+  id             String                     @id @default(dbgenerated("md5(random()::text || clock_timestamp()::text)::uuid"))
+  notificationId String
+  notification   Notification               @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel        NotificationChannel
+  status         NotificationDeliveryStatus @default(PENDING)
+  readAt         DateTime?
+  sentAt         DateTime?
+  errorMessage   String?
+  metadata       Json?
+  createdAt      DateTime                   @default(now())
+
+  @@index([userId, channel, readAt])
+}
+
+model NotificationSchedulerRun {
+  id          String             @id @default(dbgenerated("md5(random()::text || clock_timestamp()::text)::uuid"))
+  startedAt   DateTime           @default(now())
+  endedAt     DateTime?
+  status      SchedulerRunStatus @default(SUCCESS)
+  triggeredBy String?
+  summaryJson Json?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
 }

@@ -1,12 +1,16 @@
 import { 
-    vectorSearch 
+    vectorSearch,
+    semanticGlobalSearch
 } from "./vectorSearchControllers";
 import { 
-    handleChat 
+    handleChat,
+    handleSemanticChat
 } from "./chatControllers";
 
 
 export {
     vectorSearch,
-    handleChat
+    semanticGlobalSearch,
+    handleChat,
+    handleSemanticChat
 }

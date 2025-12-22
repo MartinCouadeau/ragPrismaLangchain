@@ -1,10 +1,10 @@
 import { Router } from "express";
 import chat from "./chat.routes"
-import vector from "./vectorSearch.routes"
+import search from "./Search.routes"
 
 const router = Router()
 
 router.use("/chat", chat)
-router.use("/vector", vector)
+router.use("/search", search)
 
 export default router

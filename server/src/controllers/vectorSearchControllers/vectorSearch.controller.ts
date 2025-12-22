@@ -23,11 +23,10 @@ export async function vectorSearch(req: Request, res: Response) {
     // 3. Create embedding for the question
     const questionEmbedding = await embeddings.embedQuery(question);
 
-    // pgvector expects: [1.0, 2.0, 3.0] not {"1.0", "2.0", "3.0"}
+    // pgvector expects: [1.0, 2.0, 3.0]
     const vectorString = `[${questionEmbedding.join(',')}]`;
     
-    // 4. Use PostgreSQL's native vector similarity search
-    // This uses the pgvector extension's cosine distance operator (<=>)
+    
     const results = await prisma.$queryRaw`
       SELECT 
         id, 
@@ -36,11 +35,11 @@ export async function vectorSearch(req: Request, res: Response) {
         embedding <=> ${vectorString}::vector as similarity
       FROM "Document"
       WHERE embedding IS NOT NULL
-      ORDER BY similarity ASC  -- Lower distance = more similar
-      LIMIT 20
+      ORDER BY similarity ASC
+      LIMIT 20;
     `;
     
-    return res.status(200).json(results)
+    return res.status(200).json(results);
     
   } catch (error) {
     console.error("Error:", error);
