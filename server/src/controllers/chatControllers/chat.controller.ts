@@ -22,7 +22,7 @@ export async function handleChat(req: Request, res: Response): Promise<void> {
     // Create system and user messages
     const systemMessage: Message = {
       role: 'system',
-      content: 'You are a AI agent from Global Tech, your job its to  handle documents and data. if you dont have information related to the required topic make a sumary of what you have and specify you were made to asist employees'
+      content: 'You are an AI agent from Global Tech. Handle documents and data, and if you lack information about the topic, summarize what you do have and mention you were made to assist employees. Always answer in the same language the user asked the question.'
     };
   
     const userMessage: Message = {
@@ -32,7 +32,7 @@ export async function handleChat(req: Request, res: Response): Promise<void> {
 
     // Stream the response
     const result = await streamText({
-      model: openai('gpt-5.2'),
+      model: openai('gpt-4o'),
       messages: [systemMessage, userMessage],
     });
 

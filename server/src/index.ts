@@ -1,4 +1,5 @@
 import express from "express";
+import cors from "cors";
 import routes from "./routes/index.routes"
 import { prisma } from "./lib/prisma";
 import process from "process";
@@ -17,9 +18,14 @@ process.on('unhandledRejection', (reason, promise) => {
 process.on('SIGTERM', () => {
   console.log('SIGTERM received');
   process.exit(0);
-});222
+});
 
 const app = express()
+app.use(cors({
+  origin: "http://localhost:5173",
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type"],
+}))
 app.use(express.json())
 app.use("/api", routes)
 

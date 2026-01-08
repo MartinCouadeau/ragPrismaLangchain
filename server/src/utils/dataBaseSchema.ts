@@ -1,11 +1,7 @@
-//missing some tables, for example department was missing (not on schema.prisma, why?) need to check db and compared tables with all tables here, then update
-
-
-
 export function getFullDatabaseSchema() {
   return {
     enums: {
-      UserRole: ["ADMIN", "PROJECT_MANAGER", "DEVELOPER", "MEMBER", "GUEST"],
+      UserRole: ["ADMIN", "PROJECT_MANAGER", "MEMBER", "GUEST"],
       UserStatus: ["ACTIVE", "INACTIVE"],
       ProjectStatus: ["PLANNING", "IN_PROGRESS", "COMPLETED"],
       TaskStatus: ["TODO", "IN_PROGRESS", "DONE"],
@@ -15,6 +11,7 @@ export function getFullDatabaseSchema() {
       NotificationSeverity: ["INFO", "WARNING", "CRITICAL"],
       NotificationDeliveryStatus: ["PENDING", "SENT", "FAILED"],
       SchedulerRunStatus: ["SUCCESS", "FAILED", "SKIPPED"],
+      AutoClockoutRunStatus: ["SUCCESS", "FAILED", "SKIPPED"],
       ExpenseCategory: ["SOFTWARE", "TRAVEL", "EQUIPMENT", "LABOR", "OPERATIONS", "OTHER"]
     },
     tables: [
@@ -33,6 +30,7 @@ export function getFullDatabaseSchema() {
           { name: "status", type: "enum", description: "User status from UserStatus enum" },
           { name: "isVerified", type: "boolean", description: "Whether user is verified" },
           { name: "profileImageUrl", type: "string", description: "URL to profile image" },
+          { name: "departmentId", type: "string", description: "Department ID (references Department.id)" },
           { name: "resetToken", type: "string", description: "Password reset token" },
           { name: "resetTokenExpiresAt", type: "datetime", description: "Reset token expiration time" },
           { name: "invitationToken", type: "string", description: "Invitation token" },
@@ -48,7 +46,7 @@ export function getFullDatabaseSchema() {
           { name: "id", type: "string", description: "Unique identifier" },
           { name: "createdAt", type: "datetime", description: "Creation timestamp" },
           { name: "description", type: "string", description: "Description of the department" },
-          { name: "name", type: "string", description: "department's name" },
+          { name: "name", type: "string", description: "Department's name (unique)" },
           { name: "updatedAt", type: "datetime", description: "Last update timestamp" }
         ]
       },
@@ -62,6 +60,19 @@ export function getFullDatabaseSchema() {
           { name: "expiresAt", type: "datetime", description: "Token expiration time" },
           { name: "revokedAt", type: "datetime", description: "When token was revoked" },
           { name: "createdAt", type: "datetime", description: "Creation timestamp" }
+        ]
+      },
+      {
+        name: "UserPermission",
+        description: "User permissions for specific modules and actions",
+        columns: [
+          { name: "id", type: "string", description: "Unique identifier" },
+          { name: "userId", type: "string", description: "User ID (references User.id)" },
+          { name: "module", type: "string", description: "Module name (e.g., dashboard, projects)" },
+          { name: "action", type: "string", description: "Action (e.g., view, create, edit, delete)" },
+          { name: "granted", type: "boolean", description: "Whether permission is granted" },
+          { name: "createdAt", type: "datetime", description: "Creation timestamp" },
+          { name: "updatedAt", type: "datetime", description: "Last update timestamp" }
         ]
       },
       {
@@ -79,6 +90,31 @@ export function getFullDatabaseSchema() {
           { name: "kanbanTemplateKey", type: "string", description: "Kanban template key" },
           { name: "createdAt", type: "datetime", description: "Creation timestamp" },
           { name: "updatedAt", type: "datetime", description: "Last update timestamp" }
+        ]
+      },
+      {
+        name: "ProjectActivityLog",
+        description: "Activity logs for project-related events",
+        columns: [
+          { name: "id", type: "string", description: "Unique identifier" },
+          { name: "projectId", type: "string", description: "Project ID (references Project.id)" },
+          { name: "userId", type: "string", description: "User ID (references User.id)" },
+          { name: "eventType", type: "string", description: "Event type (e.g., status_change, phase_created)" },
+          { name: "message", type: "string", description: "Activity message" },
+          { name: "metadata", type: "json", description: "Additional metadata" },
+          { name: "createdAt", type: "datetime", description: "Creation timestamp" }
+        ]
+      },
+      {
+        name: "SystemActivityLog",
+        description: "System-wide activity logs",
+        columns: [
+          { name: "id", type: "string", description: "Unique identifier" },
+          { name: "userId", type: "string", description: "User ID (references User.id)" },
+          { name: "eventType", type: "string", description: "Event type (e.g., user_created, user_updated)" },
+          { name: "message", type: "string", description: "Activity message" },
+          { name: "metadata", type: "json", description: "Additional metadata" },
+          { name: "createdAt", type: "datetime", description: "Creation timestamp" }
         ]
       },
       {
@@ -149,6 +185,18 @@ export function getFullDatabaseSchema() {
           { name: "priority", type: "enum", description: "Task priority from TaskPriority enum" },
           { name: "estimateHours", type: "float", description: "Estimated hours to complete" },
           { name: "actualSeconds", type: "int", description: "Actual time spent in seconds" },
+          { name: "createdAt", type: "datetime", description: "Creation timestamp" },
+          { name: "updatedAt", type: "datetime", description: "Last update timestamp" }
+        ]
+      },
+      {
+        name: "TaskComment",
+        description: "Comments on tasks",
+        columns: [
+          { name: "id", type: "string", description: "Unique identifier" },
+          { name: "taskId", type: "string", description: "Task ID (references Task.id)" },
+          { name: "authorId", type: "string", description: "Author user ID (references User.id)" },
+          { name: "body", type: "string", description: "Comment body" },
           { name: "createdAt", type: "datetime", description: "Creation timestamp" },
           { name: "updatedAt", type: "datetime", description: "Last update timestamp" }
         ]
@@ -259,6 +307,64 @@ export function getFullDatabaseSchema() {
         ]
       },
       {
+        name: "DayClockEntry",
+        description: "Daily clock entries for users",
+        columns: [
+          { name: "id", type: "string", description: "Unique identifier" },
+          { name: "userId", type: "string", description: "User ID (references User.id)" },
+          { name: "startedAt", type: "datetime", description: "When clock started" },
+          { name: "stoppedAt", type: "datetime", description: "When clock stopped" },
+          { name: "entryDate", type: "datetime", description: "Entry date" },
+          { name: "seconds", type: "int", description: "Duration in seconds" },
+          { name: "createdAt", type: "datetime", description: "Creation timestamp" },
+          { name: "updatedAt", type: "datetime", description: "Last update timestamp" }
+        ]
+      },
+      {
+        name: "ReunionClockEntry",
+        description: "Reunion clock entries for users with project association",
+        columns: [
+          { name: "id", type: "string", description: "Unique identifier" },
+          { name: "userId", type: "string", description: "User ID (references User.id)" },
+          { name: "projectId", type: "string", description: "Project ID (references Project.id)" },
+          { name: "startedAt", type: "datetime", description: "When clock started" },
+          { name: "stoppedAt", type: "datetime", description: "When clock stopped" },
+          { name: "entryDate", type: "datetime", description: "Entry date" },
+          { name: "seconds", type: "int", description: "Duration in seconds" },
+          { name: "pausedLaborJson", type: "json", description: "Paused labor data" },
+          { name: "createdAt", type: "datetime", description: "Creation timestamp" },
+          { name: "updatedAt", type: "datetime", description: "Last update timestamp" }
+        ]
+      },
+      {
+        name: "ClockSettings",
+        description: "Global clock settings",
+        columns: [
+          { name: "id", type: "string", description: "Unique identifier (always 'global')" },
+          { name: "timezone", type: "string", description: "Timezone setting" },
+          { name: "cutoffTime", type: "string", description: "Cutoff time for auto-clockout" },
+          { name: "createdAt", type: "datetime", description: "Creation timestamp" },
+          { name: "updatedAt", type: "datetime", description: "Last update timestamp" }
+        ]
+      },
+      {
+        name: "AutoClockoutRun",
+        description: "Logs of auto-clockout runs",
+        columns: [
+          { name: "id", type: "string", description: "Unique identifier" },
+          { name: "cutoffDateKey", type: "string", description: "Cutoff date key" },
+          { name: "timezone", type: "string", description: "Timezone used for the run" },
+          { name: "cutoffTime", type: "string", description: "Cutoff time used" },
+          { name: "startedAt", type: "datetime", description: "When run started" },
+          { name: "endedAt", type: "datetime", description: "When run ended" },
+          { name: "status", type: "enum", description: "Run status from AutoClockoutRunStatus enum" },
+          { name: "triggeredBy", type: "string", description: "What triggered the run" },
+          { name: "summaryJson", type: "json", description: "Summary data in JSON format" },
+          { name: "createdAt", type: "datetime", description: "Creation timestamp" },
+          { name: "updatedAt", type: "datetime", description: "Last update timestamp" }
+        ]
+      },
+      {
         name: "Expense",
         description: "Project expenses with categories and amounts",
         columns: [
@@ -325,17 +431,27 @@ export function getFullDatabaseSchema() {
       }
     ],
     relationships: [
+      // User relationships
       "User.id ← RefreshToken.userId",
+      "User.id ← UserPermission.userId",
       "User.id ← Project.projectManagerId",
       "User.id ← Task.assigneeId",
+      "User.id ← TaskComment.authorId",
       "User.id ← ProjectPersonnel.userId",
       "User.id ← Assignment.userId",
       "User.id ← TaskAttachment.userId",
       "User.id ← Expense.createdById",
       "User.id ← TimeEntry.userId",
+      "User.id ← DayClockEntry.userId",
+      "User.id ← ReunionClockEntry.userId",
       "User.id ← TaskActivity.userId",
       "User.id ← Notification.actorId",
       "User.id ← NotificationDelivery.userId",
+      "User.id ← ProjectActivityLog.userId",
+      "User.id ← SystemActivityLog.userId",
+      "Department.id ← User.departmentId",
+      
+      // Project relationships
       "Project.id ← ProjectHealthSnapshot.projectId",
       "Project.id ← ProjectTaskStatus.projectId",
       "Project.id ← Phase.projectId",
@@ -344,10 +460,19 @@ export function getFullDatabaseSchema() {
       "Project.id ← ProjectPersonnel.projectId",
       "Project.id ← Expense.projectId",
       "Project.id ← TimeEntry.projectId",
+      "Project.id ← ReunionClockEntry.projectId",
       "Project.id ← Notification.projectId",
+      "Project.id ← ProjectActivityLog.projectId",
+      
+      // Phase relationships
       "Phase.id ← Sprint.phaseId",
+      
+      // Sprint relationships
       "Sprint.id ← Task.sprintId",
+      
+      // Task relationships
       "ProjectTaskStatus.id ← Task.statusId",
+      "Task.id ← TaskComment.taskId",
       "Task.id ← TaskDependency.taskId",
       "Task.id ← TaskDependency.dependsOnTaskId",
       "Task.id ← Checklist.taskId",
@@ -355,11 +480,15 @@ export function getFullDatabaseSchema() {
       "Task.id ← TaskAttachment.taskId",
       "Task.id ← Assignment.taskId",
       "Task.id ← TimeEntry.taskId",
+      
+      // Checklist relationships
       "Checklist.id ← ChecklistItem.checklistId",
+      
+      // Notification relationships
       "Notification.id ← NotificationDelivery.notificationId"
     ],
     importantNotes: [
-      "All ID fields are strings using UUID format",
+      "All ID fields are strings using UUID format (md5(random()::text || clock_timestamp()::text)::uuid)",
       "Money amounts are stored in cents (integer) - divide by 100 for dollars",
       "Time durations are stored in seconds - divide by 3600 for hours",
       "Use ILIKE for case-insensitive text searches",
@@ -370,7 +499,11 @@ export function getFullDatabaseSchema() {
       "Assignment has a unique constraint on (taskId, userId, startDate, endDate)",
       "ProjectTaskStatus has value and position unique per project",
       "Phase position is unique per project",
-      "Sprint name is unique per phase"
+      "Sprint name is unique per phase",
+      "ClockSettings.id is always 'global'",
+      "AutoClockoutRun has unique constraint on (cutoffDateKey, timezone)",
+      "UserPermission has unique constraint on (userId, module, action)",
+      "ProjectPersonnel has unique constraint on (projectId, userId)"
     ]
   };
 }

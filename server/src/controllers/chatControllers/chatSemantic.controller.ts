@@ -2,84 +2,127 @@ import { Request, Response } from 'express';
 import { streamText } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { ChatRequest, Message } from '../../types/index';
+import { systemMessageContent, historicSystemContent } from '@/utils/promp';
+
+// Simple in-memory conversation store keyed by conversationId (or IP fallback)
+type QAHistory = { question: string; answer: string };
+const conversationStore: Map<string, { history: QAHistory[]; updatedAt: number }> = new Map();
+const MAX_HISTORY_MESSAGES = 100;
+const HISTORY_TTL_MS = 1000 * 60 * 60; // 1 hour
 
 export async function handleSemanticChat(req: Request, res: Response): Promise<void> {
   try {
-    const { messages }: ChatRequest = req.body;
-    //console.log("Received question: ", messages)
-    const currentMessageContent = messages[messages.length - 1].content;
+    const { messages = [], conversationId }: ChatRequest & { conversationId?: string } = req.body;
+    const currentMessageContent = messages[messages.length - 1]?.content || '';
 
-    const semanticSeach = await fetch("http://localhost:3000/api/search/semantic", {
-      method: "POST",
+    const convId = conversationId || (req.headers['x-conversation-id'] as string) || req.ip || 'anonymous';
+
+    // Clean expired histories
+    const now = Date.now();
+    for (const [key, value] of conversationStore.entries()) {
+      if (now - value.updatedAt > HISTORY_TTL_MS) {
+        conversationStore.delete(key);
+      }
+    }
+
+    const existingHistory = conversationStore.get(convId)?.history || [];
+    const updatedHistory: QAHistory[] = [
+      ...existingHistory,
+      { question: currentMessageContent, answer: '' } // answer filled after streaming
+    ].slice(-MAX_HISTORY_MESSAGES);
+
+
+    const semanticSeach = await fetch('http://localhost:3000/api/search/semantic', {
+      method: 'POST',
       headers: {
-        "Content-Type": "application/json",
+        'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ 
-        question: currentMessageContent 
+      body: JSON.stringify({
+        question: currentMessageContent,
       }),
     }).then((res) => res.json());
 
-
-    // Create system and user messages
-    const systemMessage: Message = {
-      role: 'system',
-      content: `You are a AI agent from Global Tech, your job its to  handle questions about the data on the company DB, the data will arribe in json format. EJ:
-      
-      {
-        "query": "how many deparments are there? and what are their names",
-        "sql": "SELECT COUNT(*) as department_count, STRING_AGG(\"name\", ', ') as department_names FROM \"Department\"",
-        "explanation": "Counts the number of departments and lists their names",
-        "entityTypes": [
-            "department"
-        ],
-        "results": [
-            {
-                "department_count": 5,
-                "department_names": "IT, Recursos Humanos, Marketing, Diseño, Atencion al Cliente"
-            }
-        ],
-        "totalResults": 1
-    }
-      
-      
-      you need to interpret the json that you get and use the question as context to form an answer. Always answer in the same language that the question is made (make sure to maintain names and specific properties in their original languages). If you dont have information related to the question made by the user tell them you didnt find any relevant data.`
+    const { results = [], totalResults = 0, entityTypes = [], question: searchQuestion } = semanticSeach || {};
+    const contextPayload = {
+      question: searchQuestion || currentMessageContent,
+      totalResults,
+      entityTypes,
+      results,
     };
   
+    console.log("--------------------------------");
+    console.log("[semanticGlobalSearch] Context Payload:", contextPayload);
+    console.log("--------------------------------");
+
+
+    const systemMessage: Message = { role: 'system', content: systemMessageContent() };
+    
+    const historyForPrompt = updatedHistory
+      .filter((h) => h.answer) // only include answered turns
+      .map((h, idx) => `Turno ${idx + 1} - Pregunta: ${h.question} | Respuesta: ${h.answer}`)
+      .join('\n');
+
+    const historicMessage: Message = { role: 'system', content: historicSystemContent(historyForPrompt, currentMessageContent) };
+    const historyMessage: Message = {
+      role: 'assistant',
+      content: historyForPrompt ? `Historial de la conversación:\n${historyForPrompt}` : 'Historial de la conversación: (vacío)'
+    };
     const userMessage: Message = {
       role: 'user',
-      content: `Context sections: ${JSON.stringify(semanticSeach)}\n\nQuestion: ${currentMessageContent}`
+      content: `Datos relevantes:\n${JSON.stringify(contextPayload)}\n\nPregunta actual: ${currentMessageContent}`,
     };
 
-    // Stream the response
-    const result = await streamText({
-      model: openai('gpt-5.2'),
-      messages: [systemMessage, userMessage],
-    });
+    const chatMessages: Message[] = [systemMessage, historyMessage, userMessage];
 
-    console.log("-------")
-    console.log("User Question: ", currentMessageContent)
-    console.log("-------")
-    process.stdout.write("Ai Answer: ")
+    let result
 
-    let fullText = ''
+    if (semanticSeach.sql == 'HISTORIC') {
+      const chatHistoric: Message[] = [historicMessage, historyMessage, userMessage];
+
+      result = await streamText({
+        model: openai('gpt-4o'),
+        messages: chatHistoric,
+      });
+    } else {
+        result = await streamText({
+          model: openai('gpt-4o'),
+          messages: chatMessages,
+        });
+    }
+
+    
+
+    let fullText = '';
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Transfer-Encoding', 'chunked');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('X-Accel-Buffering', 'no');
+
     for await (const textPart of result.textStream) {
       fullText += textPart;
       process.stdout.write(textPart);
+      res.write(textPart);
     }
 
+    res.end();
 
-    console.log("-------")
-    // Convert to text stream response and pipe to Express response
-    //return result.toTextStreamResponse();
-  
-
-    res.status(200).json({ 
-      response: fullText,
-      question: currentMessageContent 
+    // Save QA pair (replace last question placeholder with the answered one)
+    const savedHistory = [...updatedHistory];
+    if (savedHistory.length) {
+      savedHistory[savedHistory.length - 1] = { question: currentMessageContent, answer: fullText };
+    }
+    conversationStore.set(convId, {
+      history: savedHistory,
+      updatedAt: Date.now(),
     });
-
+    console.log("")
+    console.log("-------------------------------------------------------------------------------------------------------------------")
   } catch (error) {
-    console.error("Error in chat:", error);
-    res.status(500).json({ error: "Failed to process chat request" });
+    console.error('Error in chat:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to process chat request' });
+    } else {
+      res.end();
+    }
   }
 }

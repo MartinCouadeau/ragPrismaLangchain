@@ -66,11 +66,15 @@ export function validateSQL(sql: string): string {
     const hasAggregate = /(COUNT|SUM|AVG|MAX|MIN|GROUP_CONCAT)\s*\(/i.test(fixedSQL);
     if (hasAggregate) {
       // For now, we'll just note this and let it fail with a better error
-      console.log("Warning: Query contains GROUP BY with aggregates");
+      //console.log("Warning: Query contains GROUP BY with aggregates");
     }
   }
   
-  // 5. Always add LIMIT if missing (for safety)
+  // 5. Normalize string concatenation: replace CONCAT(a, ' ', b) with COALESCE(a,'') || ' ' || COALESCE(b,'')
+  fixedSQL = fixedSQL.replace(/CONCAT\s*\(\s*([^,]+)\s*,\s*' '\s*,\s*([^)]+)\)/gi, `COALESCE($1,'') || ' ' || COALESCE($2,'')`);
+  fixedSQL = fixedSQL.replace(/CONCAT\s*\(\s*([^)]+)\)/gi, '$1'); // fallback: strip CONCAT wrapper
+
+  // 6. Always add LIMIT if missing (for safety)
   const upperSQL = fixedSQL.toUpperCase();
   if (!upperSQL.includes('LIMIT') && !upperSQL.includes('FETCH')) {
     if (fixedSQL.endsWith(';')) {

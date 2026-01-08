@@ -17,7 +17,6 @@ datasource db {
 enum UserRole {
   ADMIN
   PROJECT_MANAGER
-  DEVELOPER //TODO:we need to change this role to Member
   MEMBER
   GUEST
 }
@@ -75,6 +74,12 @@ enum SchedulerRunStatus {
   SKIPPED
 }
 
+enum AutoClockoutRunStatus {
+  SUCCESS
+  FAILED
+  SKIPPED
+}
+
 enum ExpenseCategory {
   SOFTWARE
   TRAVEL
@@ -90,29 +95,46 @@ model User {
   lastName         String
   email            String              @unique
   passwordHash     String
-  role             UserRole            @default(DEVELOPER)
+  role             UserRole            @default(MEMBER)
   roleLabel        String?
   hourlyRateCents  Int                 @default(0)
   status           UserStatus          @default(ACTIVE)
   isVerified       Boolean             @default(false)
   profileImageUrl  String?
+  departmentId     String?
+  department       Department?         @relation(fields: [departmentId], references: [id], onDelete: SetNull)
   refreshTokens    RefreshToken[]
   projectsManaged  Project[]           @relation("ProjectManager")
   tasksAssigned    Task[]              @relation("TaskAssignee")
   projectAssignments ProjectPersonnel[] @relation("UserProjectPersonnel")
   taskAssignments  Assignment[]        @relation("UserAssignments")
   taskAttachments TaskAttachment[]
+  taskComments    TaskComment[]
   expenses         Expense[]           @relation("ExpenseCreator")
   timeEntries      TimeEntry[]         @relation("UserTimeEntries")
+  dayClockEntries  DayClockEntry[]     @relation("UserDayClockEntries")
+  reunionClockEntries ReunionClockEntry[] @relation("UserReunionClockEntries")
   taskActivities   TaskActivity[]
   authoredNotifications Notification[] @relation("NotificationActor")
   notificationDeliveries NotificationDelivery[]
+  permissions      UserPermission[]
+  projectActivityLogs ProjectActivityLog[] @relation("UserProjectActivityLogs")
+  systemActivityLogs  SystemActivityLog[] @relation("UserSystemActivityLogs")
   resetToken              String?
   resetTokenExpiresAt     DateTime?
   invitationToken         String?
   invitationTokenExpiresAt DateTime?
   createdAt        DateTime            @default(now())
   updatedAt        DateTime            @updatedAt
+}
+
+model Department {
+  id          String   @id @default(dbgenerated("md5(random()::text || clock_timestamp()::text)::uuid"))
+  name        String   @unique
+  description String?
+  users       User[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model RefreshToken {
@@ -142,11 +164,39 @@ model Project {
   projectPersonnel ProjectPersonnel[]
   expenses         Expense[]
   timeEntries      TimeEntry[]
+  reunionClockEntries ReunionClockEntry[]
   kanbanTemplateKey String         @default("default")
   notifications    Notification[]
   healthSnapshot   ProjectHealthSnapshot?
+  activityLogs     ProjectActivityLog[]
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
+}
+
+model ProjectActivityLog {
+  id          String   @id @default(dbgenerated("md5(random()::text || clock_timestamp()::text)::uuid"))
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId      String?
+  user        User?    @relation("UserProjectActivityLogs", fields: [userId], references: [id], onDelete: SetNull)
+  eventType   String   // e.g., "status_change", "phase_created", "sprint_created", "member_added", etc.
+  message     String
+  metadata    Json?    // Additional context like { oldStatus: "On Track", newStatus: "At Risk" }
+  createdAt   DateTime @default(now())
+
+  @@index([projectId, createdAt])
+}
+
+model SystemActivityLog {
+  id          String   @id @default(dbgenerated("md5(random()::text || clock_timestamp()::text)::uuid"))
+  userId      String?
+  user        User?    @relation("UserSystemActivityLogs", fields: [userId], references: [id], onDelete: SetNull)
+  eventType   String   // e.g., "user_created", "user_updated", "privilege_changed", etc.
+  message     String
+  metadata    Json?    // Additional context
+  createdAt   DateTime @default(now())
+
+  @@index([eventType, createdAt])
 }
 
 model ProjectHealthSnapshot {
@@ -230,8 +280,23 @@ model Task {
   timeEntries    TimeEntry[]
   activities     TaskActivity[]
   attachments    TaskAttachment[]
+  comments       TaskComment[]
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
+}
+
+model TaskComment {
+  id        String   @id @default(dbgenerated("md5(random()::text || clock_timestamp()::text)::uuid"))
+  taskId    String
+  authorId  String
+  body      String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([taskId, createdAt])
+  @@index([authorId])
 }
 
 model TaskDependency {
@@ -344,6 +409,65 @@ model TimeEntry {
   @@index([projectId, entryDate])
 }
 
+model DayClockEntry {
+  id        String   @id @default(dbgenerated("md5(random()::text || clock_timestamp()::text)::uuid"))
+  userId    String
+  user      User?    @relation("UserDayClockEntries", fields: [userId], references: [id], onDelete: Cascade)
+  startedAt DateTime
+  stoppedAt DateTime?
+  entryDate DateTime
+  seconds   Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, entryDate])
+  @@index([userId, startedAt])
+  @@index([userId, stoppedAt])
+}
+
+model ReunionClockEntry {
+  id               String   @id @default(dbgenerated("md5(random()::text || clock_timestamp()::text)::uuid"))
+  userId           String
+  user             User?    @relation("UserReunionClockEntries", fields: [userId], references: [id], onDelete: Cascade)
+  projectId        String?
+  project          Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  startedAt        DateTime
+  stoppedAt        DateTime?
+  entryDate        DateTime
+  seconds          Int      @default(0)
+  pausedLaborJson  Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([userId, entryDate])
+  @@index([projectId, entryDate])
+  @@index([userId, startedAt])
+}
+
+model ClockSettings {
+  id          String   @id @default("global")
+  timezone    String
+  cutoffTime  String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model AutoClockoutRun {
+  id            String              @id @default(dbgenerated("md5(random()::text || clock_timestamp()::text)::uuid"))
+  cutoffDateKey String
+  timezone      String
+  cutoffTime    String
+  startedAt     DateTime            @default(now())
+  endedAt       DateTime?
+  status        AutoClockoutRunStatus @default(SUCCESS)
+  triggeredBy   String?
+  summaryJson   Json?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  @@unique([cutoffDateKey, timezone])
+}
+
 model Expense {
   id          String          @id @default(dbgenerated("md5(random()::text || clock_timestamp()::text)::uuid"))
   projectId   String
@@ -410,4 +534,18 @@ model NotificationSchedulerRun {
   summaryJson Json?
   createdAt   DateTime           @default(now())
   updatedAt   DateTime           @updatedAt
+}
+
+model UserPermission {
+  id        String   @id @default(dbgenerated("md5(random()::text || clock_timestamp()::text)::uuid"))
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  module    String   // e.g., "dashboard", "projects", "expenses"
+  action    String   // e.g., "view", "create", "edit", "delete"
+  granted   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, module, action])
+  @@index([userId])
 }
