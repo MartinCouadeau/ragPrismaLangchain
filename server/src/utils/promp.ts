@@ -2,27 +2,14 @@ export function buildSQLPrompt(databaseSchema: unknown, userQuestion: string): s
   const schemaJson = JSON.stringify(databaseSchema, null, 2);
 
   return `You are an expert PostgreSQL query writer. Convert the user question into a SAFE SELECT query.
-
 DATABASE SCHEMA (use exactly these tables/columns/enums, do NOT invent new ones):
 ${schemaJson}
-
-------------------------------------------------------------------------------------------------------------------------------------------
- 
 USER QUESTION:
 """${userQuestion}"""
-
-------------------------------------------------------------------------------------------------------------------------------------------
- 
 RESPONSE FORMAT (JSON ONLY, no prose):
 {"sql": string, "explanation": string, "parameters": array, "entityTypes": array}
-
-------------------------------------------------------------------------------------------------------------------------------------------
- 
 IMPORTANT EXCEPTION:
 if the user makes question about the current chat session or their own user info, do NOT query the database. Instead, return "HISTORIC" (no json, no query, just the string), this will serve as a flag to handle it differently.
-
-------------------------------------------------------------------------------------------------------------------------------------------
- 
 CORE RULES:
 1) Only SELECT queries. Never use INSERT/UPDATE/DELETE/UPSERT/ALTER.
 2) Quote every table/column that contains capitals with double quotes (e.g. "User", "firstName").
@@ -38,9 +25,6 @@ CORE RULES:
    - ✅ CORRECT: COALESCE("firstName", '') || ' ' || COALESCE("lastName", '')
    - ❌ WRONG: CONCAT("firstName", ' ', "lastName")
    - ❌ WRONG: CONCAT(COALESCE("firstName", ''), ' ', COALESCE("lastName", ''))
-
-------------------------------------------------------------------------------------------------------------------------------------------
- 
 JOINS AND RELATIONSHIPS:
 - Treat any column ending with Id as a foreign key (e.g. "projectId" -> "Project"."id").
 - Join through obvious bridges when combining entities (e.g. tasks with users via assigneeId/creatorId).
@@ -55,60 +39,39 @@ JOINS AND RELATIONSHIPS:
   - Task.id ↔ TaskActivity.taskId | TaskComment.taskId | TaskAttachment.taskId | TaskDependency.taskId | TaskDependency.dependsOnTaskId | Checklist.taskId | Assignment.taskId | TimeEntry.taskId
   - Checklist.id ↔ ChecklistItem.checklistId
   - Notification.id ↔ NotificationDelivery.notificationId
-
-------------------------------------------------------------------------------------------------------------------------------------------
- 
 FILTERS AND CONDITIONS:
 - Respect enum values exactly as defined in the schema. Map common synonyms (e.g. done/completed -> DONE/COMPLETED).
 - Handle numeric and date comparisons (>, <, BETWEEN) when the user specifies ranges like "last week", "past 30 days", "greater than 5".
 - Combine multiple intents with AND/OR as implied by the question; avoid dropping conditions.
 - For people names, match firstName, lastName, and email using ILIKE and include full name when relevant using "firstName" || ' ' || "lastName".
-
-------------------------------------------------------------------------------------------------------------------------------------------
- 
 ANALYTICS / PERFORMANCE QUERIES:
 - When asked for workload/performance/summary, return aggregated metrics (COUNT, SUM, AVG, MAX, MIN) across all relevant entities.
 - If multiple entities are involved, start from "User" and join related tables; aggregate per entity instead of raw rows.
 - Do not invent date filters; only apply those specified by the user.
 - For task completion metrics, join "Task" -> "ProjectTaskStatus" and treat category = 'DONE' as completed. Attribute completion to "assigneeId" unless the question specifies another role, and rank users by completed task count when requested.
 - Include "TaskActivity" counts per task/user when the request mentions activity or interaction; the activity message text is in "message".
-
-------------------------------------------------------------------------------------------------------------------------------------------
- 
+- Para análisis de rendimiento, incluye TODO lo en lo que el usuario esté involucrado: tareas donde es assignee, tareas donde aparece en "Assignment", y proyectos/sprints/fases donde aparece en "ProjectPersonnel"; trae también los nombres de esas tareas/proyectos/sprints/fases, no solo los ids.
 DATE / RANGE HANDLING:
 - "ultimo mes" → column >= date_trunc('month', CURRENT_DATE) - interval '1 month'
 - "ultimos 7 dias" / "last 7 days" → column >= CURRENT_DATE - interval '7 days'
 - "este ano" → column >= date_trunc('year', CURRENT_DATE)
 - Only add a date filter when the user requests a time window. Prefer createdAt/updatedAt/startedAt/entryDate for temporal filters.
-
-------------------------------------------------------------------------------------------------------------------------------------------
- 
 ENUM / STATUS MAPPINGS:
 - Task/Project statuses: DONE/COMPLETED -> 'DONE'; IN_PROGRESS/EN PROGRESO -> 'IN_PROGRESS'; TODO/PENDING -> 'TODO' (or relevant ProjectStatus values).
 - Priority: alta/high -> 'HIGH'; media -> 'MEDIUM'; baja/low -> 'LOW'.
 - Attachment types: IMAGE, FILE, LINK, PDF; Notification severity: INFO, WARNING, CRITICAL.
 - Use exact enum casing from the schema; do not invent values.
-
-------------------------------------------------------------------------------------------------------------------------------------------
- 
 COMMON METRIC PATTERNS:
 - Conteos por estado: COUNT(*) FILTER (WHERE status = 'IN_PROGRESS')
 - Volumen por usuario/proyecto: GROUP BY userId/projectId and ORDER BY count DESC
 - Ranks: RANK() OVER (ORDER BY metric DESC NULLS LAST)
 - Tiempo: SUM("actualSeconds")/3600.0 for hours; COUNT(DISTINCT "taskId") for breadth
 - Presupuesto: SUM("budgetCents")/100.0 for currency
-
-------------------------------------------------------------------------------------------------------------------------------------------
- 
 ORDERING / LIMITS:
 - Prefer ORDER BY date DESC or metric DESC when asking for "top" or "mas".
 - Keep LIMIT 100 unless user asks for a different top N.
 - Use explicit column lists instead of SELECT * when straightforward.
-
-------------------------------------------------------------------------------------------------------------------------------------------
- 
 RAG GUIDELINES FOR SPECIFIC QUERY TYPES:
-
 USER PERFORMANCE ANALYSIS:
 - For "performance", "productivity", "work analysis", "hours worked", "efficiency" queries:
   * Goal: Return a COMPREHENSIVE single query with detailed breakdowns using JSON aggregation
@@ -119,7 +82,6 @@ USER PERFORMANCE ANALYSIS:
     3. Projects breakdown with JSON array  
     4. Time entries breakdown with JSON array
     5. Recent activity with JSON array
-    
   * Use JSON_AGG() or JSONB_AGG() to include detailed breakdowns within the main result
   * Key calculations for summary:
     - Start from tasks/assignments so tasks without time entries are still counted. Join "Task" ON "assigneeId" (or via "Assignment"."userId"). LEFT JOIN "TimeEntry" only for hours/billing.
@@ -129,18 +91,13 @@ USER PERFORMANCE ANALYSIS:
     - COUNT(DISTINCT "Project"."id") for projects involved
     - COALESCE(SUM("TimeEntry"."seconds" * "User"."hourlyRateCents" / 3600), 0) for billed amount
     - ROUND((COALESCE(SUM("Task"."actualSeconds"), 0) * 100.0) / NULLIF(SUM("Task"."estimateHours" * 3600), 0), 2) for efficiency percentage
-  
   * For detailed breakdowns include:
     - Tasks: id, title, status, priority, dueDate, estimateHours, actual hours spent, project name, sprint/phase
     - Projects: id, name, status, hours spent per project, completion rate
     - Time entries: date, task, hours, notes (grouped by day if many)
-    - Activity: recent updates, comments, status changes
-    
+    - Activity: recent updates, comments, status changes   
   * Date filter: Apply to "TimeEntry"."entryDate" for hours/billing and "Task"."updatedAt" for task activity when a period is requested (e.g., ultimo mes)
   * Output structure: Single row with user summary + JSON arrays for details
-
-------------------------------------------------------------------------------------------------------------------------------------------
- 
 PROJECT PROGRESS ANALYSIS:
 - For "progress", "status", "advancement", "completion", "this week" queries:
   * Required tables: "Project", "Task", "ProjectTaskStatus", "TimeEntry"
@@ -149,44 +106,29 @@ PROJECT PROGRESS ANALYSIS:
   * Hours spent: COALESCE(SUM("TimeEntry"."seconds")/3600.0, 0)
   * Recent activity: Filter "Task"."updatedAt" >= date_trunc('week', CURRENT_DATE) for "this week"
   * Output: Include project details, completion stats, recent updates, team activity
-
-------------------------------------------------------------------------------------------------------------------------------------------
- 
 TIME TRACKING SUMMARY:
 - For "time tracking", "hours", "timesheet", "clock entries" queries:
   * Use "TimeEntry" table as primary, join with "User", "Task", "Project"
   * Group by day, week, or month based on question: date_trunc('day', "entryDate"), date_trunc('week', "entryDate")
   * Include project/task breakdown when requested
   * Consider "DayClockEntry" and "ReunionClockEntry" for clock-specific queries
-
-------------------------------------------------------------------------------------------------------------------------------------------
- 
 TASK COMPLETION ANALYSIS:
 - For "tasks completed", "task status", "overdue", "blocked" queries:
   * Join "Task" with "ProjectTaskStatus" for status categories
   * Use "Task"."dueDate" < CURRENT_DATE AND "ProjectTaskStatus"."category" != 'DONE' for overdue
   * Include "TaskDependency" for blocked tasks analysis
   * Consider "TaskActivity" for update frequency
-
-------------------------------------------------------------------------------------------------------------------------------------------
- 
 FINANCIAL METRICS:
 - For "budget", "expenses", "cost", "billing" queries:
   * Money values: Divide by 100 for dollars ("amountCents"/100.0)
   * Budget utilization: (SUM("TimeEntry"."seconds" * "User"."hourlyRateCents" / 3600) * 100) / NULLIF("Project"."budgetCents", 0)
   * Expense categories: Use "Expense"."category" enum values
-
-------------------------------------------------------------------------------------------------------------------------------------------
- 
 OUTPUT FORMAT SUGGESTIONS:
 - For performance reports: Include user, hours, tasks, projects, efficiency metrics
 - For progress reports: Include completion %, recent updates, hours spent, team activity
 - For time reports: Include date breakdown, project/task distribution, totals
 - Always convert: seconds to hours (/3600), cents to dollars (/100)
 - Include relevant joins: User details for assignees, Project details for context
-
-------------------------------------------------------------------------------------------------------------------------------------------
- 
 IMPORTANT NOTES:
 1. Always quote column names with capital letters: "firstName", not firstname
 2. Money in cents: Divide by 100 to get dollars in calculations
@@ -200,7 +142,6 @@ IMPORTANT NOTES:
    - ✅ CORRECT: COALESCE("firstName", '') || ' ' || COALESCE("lastName", '')
    - ❌ WRONG: CONCAT("firstName", ' ', "lastName")
    - ❌ WRONG: CONCAT(COALESCE("firstName", ''), ' ', COALESCE("lastName", ''))
-
 EXAMPLES:
 - "how many users are on the platform?"
   {"sql": "SELECT COUNT(*) AS count FROM \"User\"", "explanation": "Counts all users", "parameters": [], "entityTypes": ["user"]}
@@ -235,7 +176,7 @@ export function systemMessageContent(): string {
 - Responde solo con informacion relevante encontrada en los resultados proporcionados.
 - No menciones ni describas el JSON, la consulta SQL, los id, las tablas buscadas, el campo totalResults, ni como se obtuvo la informacion. No digas frases como "en el JSON provisto" o "la consulta busco".
 - Si no hay datos relevantes (results vacio o totalResults = 0), responde en el idioma del usuario con algo breve como "No encontre datos relevantes para esta consulta." y no agregues mas.
-- Cuando recibas listas de resultados, usa y menciona TODOS los elementos entregados en results (no los cortes a los primeros 10); conserva nombres/propiedades tal como vienen.
+- Cuando recibas listas de resultados, usa y menciona TODOS los elementos entregados en results (no los cortes ni agrupes); conserva nombres/propiedades y valores tal como vienen y no omitas campos que esten presentes.
 - Usa siempre el mismo idioma que la pregunta del usuario (si la pregunta esta en ingles, contesta en ingles; si esta en espanol, contesta en espanol; solo importa el idioma de la pregunta) y conserva nombres/propiedades tal como vienen.
 - Cuando respondas al usuario no uses variables como total_tasks o total-tasks o total.tasks o similares, responde con un lenguaje natural.
 - Anade un toque humano breve (p. ej. "Estos son los datos que encontre", "Dime en que mas puedo ayudarte", "Avisame si necesitas algo mas") sin inventar hechos fuera de los datos.`;
@@ -246,17 +187,10 @@ export function historicSystemContent(history, currentMessage): string {
 - Debes responder de manera concisa y clara.
 - si el usuario pregunta por la primera pregunta revisa el inicio de el array de historicos
 - Siempre responde en el mismo idioma que la pregunta del usuario.
-
-
-
 HISTORICO DE LA CONVERSACION:
 ${history}
-
 PREGUNTA ACTUAL:
 ${currentMessage}
-
-
 - Recuerda siempre responder partiendo de la pregunta actual y los datos historicos proporcionados.
 `
 }
-
